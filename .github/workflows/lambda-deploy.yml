@@ -16,72 +16,99 @@ on:
         options:
           - dev
           - prod
+        default: prod
 
 env:
   AWS_REGION: us-east-1
-  PYTHON_VERSION: '3.13'
+  PYTHON_VERSION: '3.11'
 
 jobs:
   build-and-deploy:
     name: Build and Deploy Lambda
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        environment: ${{ github.event_name == 'workflow_dispatch' && fromJson(format('["{0}"]', github.event.inputs.environment)) || fromJson('["dev"]') }}
-
-    environment:
-      name: ${{ matrix.environment }}
-
+    
+    # Solo PROD en push automático, o el ambiente seleccionado en manual
+    environment: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'prod' }}
+    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
+      
+      - name: Set environment
+        id: set-env
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            ENV="${{ github.event.inputs.environment }}"
+          else
+            ENV="prod"
+          fi
+          echo "environment=$ENV" >> $GITHUB_OUTPUT
+          echo "Deploying to: $ENV"
+      
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-
+      
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
-
+      
+      - name: Verify AWS credentials
+        run: |
+          echo "Testing AWS credentials..."
+          aws sts get-caller-identity
+      
+      - name: Get Lambda function name
+        id: get-function-name
+        run: |
+          ENV="${{ steps.set-env.outputs.environment }}"
+          echo "Searching for Lambda function in $ENV..."
+          
+          FUNCTION_NAME=$(aws lambda list-functions \
+            --query "Functions[?starts_with(FunctionName, 'event-notifications-$ENV')].FunctionName" \
+            --output text)
+          
+          if [ -z "$FUNCTION_NAME" ]; then
+            echo "❌ ERROR: Lambda function not found for environment: $ENV"
+            echo ""
+            echo "Available functions:"
+            aws lambda list-functions --query 'Functions[].FunctionName' --output table
+            exit 1
+          fi
+          
+          echo "✅ Found Lambda function: $FUNCTION_NAME"
+          echo "function_name=$FUNCTION_NAME" >> $GITHUB_OUTPUT
+      
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r src/requirements.txt -t package/
-
+      
       - name: Copy source files
         run: |
           cp -r src/lambda/* package/
-
+      
       - name: Create deployment package
         run: |
           cd package
-          zip -r ../lambda-${{ matrix.environment }}.zip .
+          zip -r ../lambda-deployment.zip .
           cd ..
-
-      - name: Get Lambda function name
-        id: get-function-name
-        run: |
-          FUNCTION_NAME=$(aws lambda list-functions \
-            --query "Functions[?starts_with(FunctionName, 'event-notifications-${{ matrix.environment }}')].FunctionName" \
-            --output text)
-          echo "function_name=$FUNCTION_NAME" >> $GITHUB_OUTPUT
-
+      
       - name: Update Lambda function code
         run: |
           aws lambda update-function-code \
             --function-name ${{ steps.get-function-name.outputs.function_name }} \
-            --zip-file fileb://lambda-${{ matrix.environment }}.zip
-
+            --zip-file fileb://lambda-deployment.zip
+      
       - name: Wait for Lambda update to complete
         run: |
           aws lambda wait function-updated \
             --function-name ${{ steps.get-function-name.outputs.function_name }}
-
+      
       - name: Publish Lambda version
         id: publish-version
         run: |
@@ -91,34 +118,34 @@ jobs:
             --query 'Version' \
             --output text)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-      - name: Tag Lambda version
-        run: |
-          aws lambda tag-resource \
-            --resource $(aws lambda get-function \
-              --function-name ${{ steps.get-function-name.outputs.function_name }} \
-              --query 'Configuration.FunctionArn' \
-              --output text):${{ steps.publish-version.outputs.version }} \
-            --tags "GitCommit=${{ github.sha }},DeployedBy=${{ github.actor }},Environment=${{ matrix.environment }}"
-
+      
       - name: Upload deployment artifact
         uses: actions/upload-artifact@v4
         with:
-          name: lambda-package-${{ matrix.environment }}
-          path: lambda-${{ matrix.environment }}.zip
+          name: lambda-package-${{ steps.set-env.outputs.environment }}
+          path: lambda-deployment.zip
           retention-days: 30
-
+      
       - name: Test Lambda function
         run: |
+          echo "Testing Lambda function..."
           aws lambda invoke \
             --function-name ${{ steps.get-function-name.outputs.function_name }} \
             --payload '{"trigger_type": "manual", "test": true}' \
             response.json
-          cat response.json
-
-      - name: Notify deployment
-        if: success()
+          
+          echo "Response:"
+          cat response.json | python3 -m json.tool || cat response.json
+        continue-on-error: true
+      
+      - name: Deployment Summary
         run: |
-          echo "✅ Lambda function deployed successfully to ${{ matrix.environment }}"
-          echo "Version: ${{ steps.publish-version.outputs.version }}"
-          echo "Commit: ${{ github.sha }}"
+          echo "## 🚀 Lambda Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment**: ${{ steps.set-env.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Function**: ${{ steps.get-function-name.outputs.function_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: ${{ steps.publish-version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Deployed by**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ✅ Deployment successful!" >> $GITHUB_STEP_SUMMARY
