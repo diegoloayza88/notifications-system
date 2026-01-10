@@ -1,0 +1,124 @@
+name: Deploy Lambda Function
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - '.github/workflows/lambda-deploy.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        type: choice
+        options:
+          - dev
+          - prod
+
+env:
+  AWS_REGION: us-east-1
+  PYTHON_VERSION: '3.13'
+
+jobs:
+  build-and-deploy:
+    name: Build and Deploy Lambda
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        environment: ${{ github.event_name == 'workflow_dispatch' && fromJson(format('["{0}"]', github.event.inputs.environment)) || fromJson('["dev"]') }}
+
+    environment:
+      name: ${{ matrix.environment }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r src/requirements.txt -t package/
+
+      - name: Copy source files
+        run: |
+          cp -r src/lambda/* package/
+
+      - name: Create deployment package
+        run: |
+          cd package
+          zip -r ../lambda-${{ matrix.environment }}.zip .
+          cd ..
+
+      - name: Get Lambda function name
+        id: get-function-name
+        run: |
+          FUNCTION_NAME=$(aws lambda list-functions \
+            --query "Functions[?starts_with(FunctionName, 'event-notifications-${{ matrix.environment }}')].FunctionName" \
+            --output text)
+          echo "function_name=$FUNCTION_NAME" >> $GITHUB_OUTPUT
+
+      - name: Update Lambda function code
+        run: |
+          aws lambda update-function-code \
+            --function-name ${{ steps.get-function-name.outputs.function_name }} \
+            --zip-file fileb://lambda-${{ matrix.environment }}.zip
+
+      - name: Wait for Lambda update to complete
+        run: |
+          aws lambda wait function-updated \
+            --function-name ${{ steps.get-function-name.outputs.function_name }}
+
+      - name: Publish Lambda version
+        id: publish-version
+        run: |
+          VERSION=$(aws lambda publish-version \
+            --function-name ${{ steps.get-function-name.outputs.function_name }} \
+            --description "Deployed from commit ${{ github.sha }}" \
+            --query 'Version' \
+            --output text)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Tag Lambda version
+        run: |
+          aws lambda tag-resource \
+            --resource $(aws lambda get-function \
+              --function-name ${{ steps.get-function-name.outputs.function_name }} \
+              --query 'Configuration.FunctionArn' \
+              --output text):${{ steps.publish-version.outputs.version }} \
+            --tags "GitCommit=${{ github.sha }},DeployedBy=${{ github.actor }},Environment=${{ matrix.environment }}"
+
+      - name: Upload deployment artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lambda-package-${{ matrix.environment }}
+          path: lambda-${{ matrix.environment }}.zip
+          retention-days: 30
+
+      - name: Test Lambda function
+        run: |
+          aws lambda invoke \
+            --function-name ${{ steps.get-function-name.outputs.function_name }} \
+            --payload '{"trigger_type": "manual", "test": true}' \
+            response.json
+          cat response.json
+
+      - name: Notify deployment
+        if: success()
+        run: |
+          echo "✅ Lambda function deployed successfully to ${{ matrix.environment }}"
+          echo "Version: ${{ steps.publish-version.outputs.version }}"
+          echo "Commit: ${{ github.sha }}"

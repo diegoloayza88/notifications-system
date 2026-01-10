@@ -1,0 +1,57 @@
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - '.github/workflows/python-checks.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+
+jobs:
+  lint-and-test:
+    name: Lint and Test Python Code
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 black pylint
+          pip install -r src/requirements.txt
+      
+      - name: Run Black (formatting check)
+        run: |
+          black --check src/lambda/
+        continue-on-error: true
+      
+      - name: Run Flake8 (linting)
+        run: |
+          flake8 src/lambda/ --max-line-length=100 --ignore=E501,W503
+        continue-on-error: true
+      
+      - name: Run Pylint (static analysis)
+        run: |
+          pylint src/lambda/*.py --disable=C0111,R0903,C0103 --max-line-length=100
+        continue-on-error: true
+      
+      - name: Check for syntax errors
+        run: |
+          python -m py_compile src/lambda/*.py
+      
+      - name: Test imports
+        run: |
+          cd src/lambda
+          python -c "import handler; import sheets_client; import notification_manager; import event_processor"
+        continue-on-error: true

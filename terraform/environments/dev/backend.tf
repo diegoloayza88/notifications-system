@@ -3,7 +3,7 @@ terraform {
     organization = "portfolio-diego"
 
     workspaces {
-      name = "event-notifications-dev"
+      name = "notifications-system-dev"
     }
   }
 }
