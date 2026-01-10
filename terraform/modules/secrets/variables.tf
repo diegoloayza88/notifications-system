@@ -9,7 +9,6 @@ variable "secrets" {
     description = string
     value       = string
   }))
-  sensitive = true
 }
 
 variable "tags" {
