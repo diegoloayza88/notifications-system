@@ -58,3 +58,4 @@ variable "study_sheet_id" {
   description = "Google Sheets ID for study schedule"
   type        = string
 }
+

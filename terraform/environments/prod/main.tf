@@ -150,3 +150,4 @@ module "eventbridge" {
 
   tags = local.common_tags
 }
+
