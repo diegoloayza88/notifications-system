@@ -18,8 +18,8 @@ resource "aws_iam_role" "lambda" {
 }
 
 resource "aws_iam_role_policy_attachment" "lambda_role_policy_attachment" {
-  policy_arn = aws_iam_role.lambda.arn
-  role       = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+  role       = aws_iam_role.lambda.name
 }
 
 resource "aws_iam_role_policy" "lambda_role_policy" {
