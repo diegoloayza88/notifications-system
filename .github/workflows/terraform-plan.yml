@@ -8,6 +8,11 @@ on:
       - 'terraform/**'
       - '.github/workflows/terraform-*.yml'
 
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
 env:
   TF_CLOUD_ORGANIZATION: "portfolio-diego"
   TF_WORKSPACE_DEV: "event-notifications-dev"
