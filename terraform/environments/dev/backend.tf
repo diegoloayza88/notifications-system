@@ -1,6 +1,6 @@
 terraform {
   cloud {
-    organization = "TU_ORGANIZACION"  # ← CAMBIAR ESTO
+    organization = "portfolio-diego"
 
     workspaces {
       name = "event-notifications-dev"
