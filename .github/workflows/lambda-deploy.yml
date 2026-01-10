@@ -20,14 +20,13 @@ on:
 
 env:
   AWS_REGION: us-east-1
-  PYTHON_VERSION: '3.11'
+  PYTHON_VERSION: '3.13'
 
 jobs:
   build-and-deploy:
     name: Build and Deploy Lambda
     runs-on: ubuntu-latest
     
-    # Solo PROD en push automático, o el ambiente seleccionado en manual
     environment: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'prod' }}
     
     steps:
@@ -56,11 +55,6 @@ jobs:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
-      
-      - name: Verify AWS credentials
-        run: |
-          echo "Testing AWS credentials..."
-          aws sts get-caller-identity
       
       - name: Get Lambda function name
         id: get-function-name
@@ -129,11 +123,17 @@ jobs:
       - name: Test Lambda function
         run: |
           echo "Testing Lambda function..."
+          
+          # Crear payload en archivo
+          echo '{"trigger_type": "manual", "test": true}' > payload.json
+          
+          # Invocar Lambda
           aws lambda invoke \
             --function-name ${{ steps.get-function-name.outputs.function_name }} \
-            --payload '{"trigger_type": "manual", "test": true}' \
+            --payload file://payload.json \
             response.json
           
+          # Mostrar respuesta
           echo "Response:"
           cat response.json | python3 -m json.tool || cat response.json
         continue-on-error: true
@@ -149,3 +149,4 @@ jobs:
           echo "- **Deployed by**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### ✅ Deployment successful!" >> $GITHUB_STEP_SUMMARY
+
