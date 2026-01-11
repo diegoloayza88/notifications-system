@@ -9,7 +9,7 @@ logger = logging.getLogger()
 
 
 class NotificationManager:
-    """Manager for sending notifications via email and Discord."""
+    """Manager for sending notifications via email, Discord, and Calendar."""
 
     def __init__(self):
         """Initialize notification clients."""
@@ -32,32 +32,33 @@ class NotificationManager:
             self,
             event_data: Dict[str, Any],
             event_type: str,
-            notification_label: str
+            notification_label: str,
+            sheets_client=None,
+            calendar_id: str = ''
     ) -> Dict[str, bool]:
         """
-        Send notification via email and Discord.
+        Send notification via all channels.
 
         Args:
             event_data: Event information
             event_type: Type of event (concerts, interviews, study)
             notification_label: Label for this notification timing
+            sheets_client: Optional GoogleSheetsClient for calendar integration
+            calendar_id: Google Calendar ID
 
         Returns:
             Dictionary with success status for each channel
         """
         results = {
             'email': False,
-            'discord': False
+            'discord': False,
+            'calendar': False
         }
 
         try:
             # Format messages
-            email_message = self._format_email_message(
-                event_data, event_type, notification_label
-            )
-            discord_message = self._format_discord_message(
-                event_data, event_type, notification_label
-            )
+            email_message = self._format_email_message(event_data, event_type, notification_label)
+            discord_message = self._format_discord_message(event_data, event_type, notification_label)
 
             # Send email via SNS
             try:
@@ -84,11 +85,36 @@ class NotificationManager:
             except Exception as e:
                 logger.error(f"Error sending Discord notification: {str(e)}")
 
+            # Create Google Calendar event (only on first notification)
+            if sheets_client and calendar_id and self._should_create_calendar_event(event_type, notification_label):
+                try:
+                    # Check if event already exists
+                    if not sheets_client.check_calendar_event_exists(calendar_id, event_data.get('event_id', '')):
+                        event_id = sheets_client.create_calendar_event(
+                            calendar_id=calendar_id,
+                            event_data=event_data,
+                            event_type=event_type
+                        )
+                        results['calendar'] = True
+                        logger.info(f"Calendar event created: {event_id}")
+                except Exception as e:
+                    logger.error(f"Error creating calendar event: {str(e)}")
+
             return results
 
         except Exception as e:
             logger.error(f"Error in send_notification: {str(e)}")
             return results
+
+    def _should_create_calendar_event(self, event_type: str, notification_label: str) -> bool:
+        """Determine if calendar event should be created for this notification."""
+        # Only create calendar event on the earliest notification
+        create_on = {
+            'concerts': '2_weeks_before',
+            'interviews': '1_week_before',
+            'study': '1_day_before_6pm'
+        }
+        return notification_label == create_on.get(event_type)
 
     def _format_email_message(
             self,
@@ -98,188 +124,75 @@ class NotificationManager:
     ) -> Dict[str, str]:
         """Format email message based on event type."""
 
-        templates = {
-            'concerts': {
-                '2_weeks_before': {
-                    'subject': '🎸 Concierto en 2 semanas - {band}',
-                    'body': '''¡Hola Diego!
+        if event_type == 'concerts':
+            subjects = {
+                '2_weeks_before': f"🎸 Concierto en 2 semanas - {event_data.get('band', 'N/A')}",
+                '1_day_before': f"🎸 ¡Mañana es el concierto de {event_data.get('band', 'N/A')}!",
+                '4_hours_before': f"⏰ En 4 horas - Concierto de {event_data.get('band', 'N/A')}"
+            }
 
-Te recuerdo que tienes un concierto próximo:
+            body = f"""¡Hola Diego!
 
-🎤 Artista: {band}
-📍 Lugar: {venue}
-📅 Fecha: {date}
-🕒 Hora: {time}
-🌎 Ubicación: {location}
+Recordatorio de concierto:
 
-{notes}
+🎤 Artista: {event_data.get('band', 'N/A')}
+📍 Lugar: {event_data.get('venue', 'N/A')}
+📅 Fecha: {event_data.get('date', 'N/A')}
+🕒 Hora: {event_data.get('time', 'N/A')}
+🌎 Ubicación: {event_data.get('location', 'N/A')}
 
-¡Prepara todo con anticipación!
-'''
-                },
-                '1_day_before': {
-                    'subject': '🎸 ¡Mañana es el concierto de {band}!',
-                    'body': '''¡Hola Diego!
+{event_data.get('notes', '')}
 
-¡Mañana es el gran día!
+¡Disfrútalo! 🎉
+"""
 
-🎤 Artista: {band}
-📍 Lugar: {venue}
-🕒 Hora: {time}
-🌎 Ubicación: {location}
+        elif event_type == 'interviews':
+            subjects = {
+                '1_week_before': f"💼 Entrevista en 1 semana - {event_data.get('company', 'N/A')}",
+                '1_day_before': f"💼 Mañana: Entrevista con {event_data.get('company', 'N/A')}",
+                '1_hour_before': f"⏰ En 1 hora - Entrevista con {event_data.get('company', 'N/A')}"
+            }
 
-Revisa:
-- Entradas impresas o descargadas
-- Transporte al venue
-- Horario de llegada
+            body = f"""Hola Diego,
 
-{notes}
+Recordatorio de entrevista:
 
-¡A disfrutar! 🎉
-'''
-                },
-                '4_hours_before': {
-                    'subject': '⏰ En 4 horas - Concierto de {band}',
-                    'body': '''¡Diego!
+🏢 Empresa: {event_data.get('company', 'N/A')}
+👔 Posición: {event_data.get('position', 'N/A')}
+📅 Fecha: {event_data.get('date', 'N/A')}
+🕒 Hora: {event_data.get('time', 'N/A')}
+👤 Entrevistador: {event_data.get('interviewer', 'N/A')}
+📊 Etapa: {event_data.get('stage', 'N/A')}
 
-¡Ya casi es hora! El concierto de {band} comienza en 4 horas.
+{event_data.get('prep_notes', '')}
 
-🕒 Hora de inicio: {time}
-📍 Lugar: {venue}
+¡Mucha suerte! 💪
+"""
 
-Verifica:
-- Tienes tus entradas
-- Sal con tiempo suficiente
-- Carga tu celular
+        else:  # study
+            subjects = {
+                '1_day_before_6pm': f"📚 Recordatorio de estudio - {event_data.get('course', 'N/A')}"
+            }
 
-¡Disfrútalo! 🤘
-'''
-                }
-            },
-            'interviews': {
-                '1_week_before': {
-                    'subject': '💼 Entrevista en 1 semana - {company}',
-                    'body': '''Hola Diego,
+            body = f"""Hola Diego,
 
-Tienes una entrevista programada para dentro de 1 semana:
+Recordatorio de sesión de estudio:
 
-🏢 Empresa: {company}
-👔 Posición: {position}
-📅 Fecha: {date}
-🕒 Hora: {time}
-👤 Entrevistador: {interviewer}
-📊 Etapa: {stage}
+📖 Curso: {event_data.get('course', 'N/A')}
+📝 Tema: {event_data.get('topic', 'N/A')}
+📅 Fecha: {event_data.get('date', 'N/A')}
+⏱️ Duración: {event_data.get('duration', 'N/A')}
+⭐ Prioridad: {event_data.get('priority', 'N/A')}
 
-Tiempo para preparar:
-{prep_notes}
-
-¡Éxito! 💪
-'''
-                },
-                '1_day_before': {
-                    'subject': '💼 Mañana: Entrevista con {company}',
-                    'body': '''Hola Diego,
-
-¡Mañana es tu entrevista!
-
-🏢 Empresa: {company}
-👔 Posición: {position}
-🕒 Hora: {time}
-👤 Entrevistador: {interviewer}
-📊 Etapa: {stage}
-
-Últimos preparativos:
-{prep_notes}
-
-Revisa:
-- Link de la reunión (si es virtual)
-- Documentos necesarios
-- Preguntas que quieres hacer
-
-¡Mucha suerte! 🍀
-'''
-                },
-                '1_hour_before': {
-                    'subject': '⏰ En 1 hora - Entrevista con {company}',
-                    'body': '''¡Diego!
-
-Tu entrevista con {company} es en 1 HORA.
-
-🕒 Hora: {time}
-👤 Entrevistador: {interviewer}
-📊 Etapa: {stage}
-
-Checklist final:
-✅ Ambiente listo (si es virtual)
-✅ Agua a mano
-✅ Notas de repaso
-✅ Actitud positiva
-
-¡Tú puedes! 💪
-'''
-                }
-            },
-            'study': {
-                '1_day_before_6pm': {
-                    'subject': '📚 Recordatorio de estudio - {course}',
-                    'body': '''Hola Diego,
-
-Recuerda tu sesión de estudio programada para mañana:
-
-📖 Curso: {course}
-📝 Tema: {topic}
-📅 Fecha: {date}
-⏱️ Duración: {duration}
-⭐ Prioridad: {priority}
-
-Recursos:
-{resources}
+{event_data.get('resources', '')}
 
 ¡A aprender! 🚀
-'''
-                }
-            }
+"""
+
+        return {
+            'subject': subjects.get(notification_label, 'Recordatorio'),
+            'body': body
         }
-
-        template = templates.get(event_type, {}).get(notification_label, {})
-
-        if event_type == 'concerts':
-            return {
-                'subject': template['subject'].format(band=event_data.get('band', 'N/A')),
-                'body': template['body'].format(
-                    band=event_data.get('band', 'N/A'),
-                    venue=event_data.get('venue', 'N/A'),
-                    date=event_data.get('date', 'N/A'),
-                    time=event_data.get('time', 'N/A'),
-                    location=event_data.get('location', 'N/A'),
-                    notes=event_data.get('notes', '')
-                )
-            }
-        elif event_type == 'interviews':
-            return {
-                'subject': template['subject'].format(company=event_data.get('company', 'N/A')),
-                'body': template['body'].format(
-                    company=event_data.get('company', 'N/A'),
-                    position=event_data.get('position', 'N/A'),
-                    date=event_data.get('date', 'N/A'),
-                    time=event_data.get('time', 'N/A'),
-                    interviewer=event_data.get('interviewer', 'N/A'),
-                    stage=event_data.get('stage', 'N/A'),
-                    prep_notes=event_data.get('prep_notes', '')
-                )
-            }
-        else:  # study
-            return {
-                'subject': template['subject'].format(course=event_data.get('course', 'N/A')),
-                'body': template['body'].format(
-                    course=event_data.get('course', 'N/A'),
-                    topic=event_data.get('topic', 'N/A'),
-                    date=event_data.get('date', 'N/A'),
-                    duration=event_data.get('duration', 'N/A'),
-                    priority=event_data.get('priority', 'N/A'),
-                    resources=event_data.get('resources', '')
-                )
-            }
 
     def _format_discord_message(
             self,
@@ -289,28 +202,16 @@ Recursos:
     ) -> Dict[str, Any]:
         """Format Discord embed message based on event type."""
 
-        # Color codes
         colors = {
-            'concerts': 0xFF0000,  # Red
-            'interviews': 0x0099FF,  # Blue
-            'study': 0x00FF00  # Green
+            'concerts': 0xFF0000,
+            'interviews': 0x0099FF,
+            'study': 0x00FF00
         }
 
-        # Emoji mapping
         emojis = {
-            'concerts': {
-                '2_weeks_before': '🎸',
-                '1_day_before': '🎉',
-                '4_hours_before': '⏰'
-            },
-            'interviews': {
-                '1_week_before': '💼',
-                '1_day_before': '🎯',
-                '1_hour_before': '⚡'
-            },
-            'study': {
-                '1_day_before_6pm': '📚'
-            }
+            'concerts': {'2_weeks_before': '🎸', '1_day_before': '🎉', '4_hours_before': '⏰'},
+            'interviews': {'1_week_before': '💼', '1_day_before': '🎯', '1_hour_before': '⚡'},
+            'study': {'1_day_before_6pm': '📚'}
         }
 
         emoji = emojis.get(event_type, {}).get(notification_label, '🔔')
@@ -322,10 +223,7 @@ Recursos:
                 {'name': '📍 Venue', 'value': event_data.get('venue', 'N/A'), 'inline': True},
                 {'name': '📅 Fecha', 'value': event_data.get('date', 'N/A'), 'inline': True},
                 {'name': '🕒 Hora', 'value': event_data.get('time', 'N/A'), 'inline': True},
-                {'name': '🌎 Ubicación', 'value': event_data.get('location', 'N/A'), 'inline': False},
             ]
-            if event_data.get('notes'):
-                fields.append({'name': '📝 Notas', 'value': event_data['notes'], 'inline': False})
 
         elif event_type == 'interviews':
             title = f"{emoji} Recordatorio de Entrevista"
@@ -334,11 +232,7 @@ Recursos:
                 {'name': '👔 Posición', 'value': event_data.get('position', 'N/A'), 'inline': True},
                 {'name': '📅 Fecha', 'value': event_data.get('date', 'N/A'), 'inline': True},
                 {'name': '🕒 Hora', 'value': event_data.get('time', 'N/A'), 'inline': True},
-                {'name': '👤 Entrevistador', 'value': event_data.get('interviewer', 'N/A'), 'inline': True},
-                {'name': '📊 Etapa', 'value': event_data.get('stage', 'N/A'), 'inline': True},
             ]
-            if event_data.get('prep_notes'):
-                fields.append({'name': '📝 Preparación', 'value': event_data['prep_notes'], 'inline': False})
 
         else:  # study
             title = f"{emoji} Recordatorio de Estudio"
@@ -346,11 +240,7 @@ Recursos:
                 {'name': '📖 Curso', 'value': event_data.get('course', 'N/A'), 'inline': True},
                 {'name': '📝 Tema', 'value': event_data.get('topic', 'N/A'), 'inline': True},
                 {'name': '📅 Fecha', 'value': event_data.get('date', 'N/A'), 'inline': True},
-                {'name': '⏱️ Duración', 'value': event_data.get('duration', 'N/A'), 'inline': True},
-                {'name': '⭐ Prioridad', 'value': event_data.get('priority', 'N/A'), 'inline': True},
             ]
-            if event_data.get('resources'):
-                fields.append({'name': '🔗 Recursos', 'value': event_data['resources'], 'inline': False})
 
         return {
             'embeds': [{
@@ -358,41 +248,8 @@ Recursos:
                 'color': colors.get(event_type, 0x808080),
                 'fields': fields,
                 'footer': {
-                    'text': f"Event ID: {event_data.get('event_id', 'N/A')} | {notification_label.replace('_', ' ').title()}"
+                    'text': f"Event ID: {event_data.get('event_id', 'N/A')}"
                 },
                 'timestamp': datetime.utcnow().isoformat()
             }]
         }
-
-    def send_summary_notification(
-            self,
-            summary: Dict[str, Any]
-    ) -> None:
-        """Send a daily summary notification."""
-        try:
-            # Email summary
-            subject = f"📊 Resumen Diario - {summary.get('date', 'N/A')}"
-            body = f"""Resumen de eventos procesados:
-
-📅 Fecha: {summary.get('date', 'N/A')}
-🔔 Total notificaciones enviadas: {summary.get('total_notifications', 0)}
-📝 Eventos procesados: {summary.get('total_events', 0)}
-
-Desglose:
-- 🎸 Conciertos: {summary.get('concerts', 0)} notificaciones
-- 💼 Entrevistas: {summary.get('interviews', 0)} notificaciones
-- 📚 Estudio: {summary.get('study', 0)} notificaciones
-
-¡Que tengas un excelente día!
-"""
-
-            self.sns_client.publish(
-                TopicArn=self.sns_topic_arn,
-                Subject=subject,
-                Message=body
-            )
-
-            logger.info("Summary notification sent")
-
-        except Exception as e:
-            logger.error(f"Error sending summary notification: {str(e)}")

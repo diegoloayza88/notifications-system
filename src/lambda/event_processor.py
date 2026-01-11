@@ -3,7 +3,6 @@ import os
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
 import boto3
-import pytz
 
 logger = logging.getLogger()
 
@@ -12,14 +11,7 @@ class EventProcessor:
     """Process events and manage notifications."""
 
     def __init__(self, sheets_client, notification_manager, timezone):
-        """
-        Initialize event processor.
-
-        Args:
-            sheets_client: GoogleSheetsClient instance
-            notification_manager: NotificationManager instance
-            timezone: pytz timezone object
-        """
+        """Initialize event processor."""
         self.sheets_client = sheets_client
         self.notification_manager = notification_manager
         self.timezone = timezone
@@ -35,19 +27,7 @@ class EventProcessor:
             current_time: datetime,
             trigger_type: str
     ) -> Dict[str, Any]:
-        """
-        Process events and send notifications based on rules.
-
-        Args:
-            events_data: Raw data from Google Sheets
-            event_type: Type of event (concerts, interviews, study)
-            notification_rules: List of notification timing rules
-            current_time: Current datetime with timezone
-            trigger_type: Type of trigger that invoked this
-
-        Returns:
-            Processing results summary
-        """
+        """Process events and send notifications based on rules."""
         try:
             events_processed = 0
             notifications_sent = 0
@@ -57,7 +37,6 @@ class EventProcessor:
 
             for row in events_data:
                 try:
-                    # Parse event based on type
                     event_data = self._parse_event_row(row, event_type)
 
                     if not event_data or not event_data.get('event_id'):
@@ -66,7 +45,6 @@ class EventProcessor:
 
                     events_processed += 1
 
-                    # Check if event needs notification
                     notifications = self._check_notification_needed(
                         event_data=event_data,
                         event_type=event_type,
@@ -75,7 +53,6 @@ class EventProcessor:
                         trigger_type=trigger_type
                     )
 
-                    # Send notifications
                     for notification_label in notifications:
                         if self._send_and_track_notification(
                                 event_data=event_data,
@@ -101,11 +78,7 @@ class EventProcessor:
             logger.error(f"Error in process_events: {str(e)}")
             raise
 
-    def _parse_event_row(
-            self,
-            row: List[Any],
-            event_type: str
-    ) -> Optional[Dict[str, Any]]:
+    def _parse_event_row(self, row: List[Any], event_type: str) -> Optional[Dict[str, Any]]:
         """Parse a row from Google Sheets into event data."""
         try:
             if event_type == 'concerts':
@@ -118,7 +91,6 @@ class EventProcessor:
                     'date': row[3],
                     'time': row[4],
                     'location': row[5],
-                    'notified_at': row[6] if len(row) > 6 else '',
                     'notes': row[7] if len(row) > 7 else ''
                 }
             elif event_type == 'interviews':
@@ -132,7 +104,6 @@ class EventProcessor:
                     'time': row[4],
                     'interviewer': row[5],
                     'stage': row[6],
-                    'notified_at': row[7] if len(row) > 7 else '',
                     'prep_notes': row[8] if len(row) > 8 else ''
                 }
             else:  # study
@@ -145,7 +116,6 @@ class EventProcessor:
                     'date': row[3],
                     'duration': row[4],
                     'priority': row[5],
-                    'notified_at': row[6] if len(row) > 6 else '',
                     'resources': row[7] if len(row) > 7 else ''
                 }
         except Exception as e:
@@ -160,32 +130,19 @@ class EventProcessor:
             current_time: datetime,
             trigger_type: str
     ) -> List[str]:
-        """
-        Check which notifications are needed for an event.
-
-        Returns:
-            List of notification labels that should be sent
-        """
+        """Check which notifications are needed for an event."""
         notifications_needed = []
 
         try:
-            # Parse event datetime
             event_datetime = self._parse_event_datetime(
                 event_data.get('date', ''),
                 event_data.get('time', ''),
                 self.timezone
             )
 
-            if not event_datetime:
-                logger.warning(f"Could not parse datetime for event {event_data.get('event_id')}")
+            if not event_datetime or event_datetime < current_time:
                 return notifications_needed
 
-            # Skip past events
-            if event_datetime < current_time:
-                logger.debug(f"Skipping past event {event_data.get('event_id')}")
-                return notifications_needed
-
-            # Check each notification rule
             for rule in notification_rules:
                 notification_time = event_datetime - timedelta(
                     days=rule['days'],
@@ -194,30 +151,18 @@ class EventProcessor:
 
                 label = rule['label']
 
-                # Special handling for study 6pm notification
                 if event_type == 'study' and label == '1_day_before_6pm':
-                    # Set notification time to 6pm the day before
                     notification_time = (event_datetime - timedelta(days=1)).replace(
                         hour=18, minute=0, second=0, microsecond=0
                     )
 
-                # Check if we're in the notification window
-                # Allow 2-hour window for hourly checks, 6-hour window for daily checks
                 window_hours = 2 if trigger_type == 'hourly-urgent' else 6
                 window_start = notification_time - timedelta(hours=window_hours / 2)
                 window_end = notification_time + timedelta(hours=window_hours / 2)
 
                 if window_start <= current_time <= window_end:
-                    # Check if already notified
-                    if not self._is_already_notified(
-                            event_data.get('event_id'),
-                            event_type,
-                            label
-                    ):
+                    if not self._is_already_notified(event_data.get('event_id'), event_type, label):
                         notifications_needed.append(label)
-                        logger.info(
-                            f"Notification needed for {event_data.get('event_id')}: {label}"
-                        )
 
             return notifications_needed
 
@@ -225,15 +170,9 @@ class EventProcessor:
             logger.error(f"Error checking notifications: {str(e)}")
             return notifications_needed
 
-    def _parse_event_datetime(
-            self,
-            date_str: str,
-            time_str: str,
-            timezone: pytz.timezone
-    ) -> Optional[datetime]:
+    def _parse_event_datetime(self, date_str: str, time_str: str, timezone) -> Optional[datetime]:
         """Parse date and time strings into timezone-aware datetime."""
         try:
-            # Expected format: YYYY-MM-DD and HH:MM
             datetime_str = f"{date_str} {time_str}"
             naive_dt = datetime.strptime(datetime_str, '%Y-%m-%d %H:%M')
             return timezone.localize(naive_dt)
@@ -241,25 +180,14 @@ class EventProcessor:
             logger.error(f"Error parsing datetime '{date_str} {time_str}': {str(e)}")
             return None
 
-    def _is_already_notified(
-            self,
-            event_id: str,
-            event_type: str,
-            notification_label: str
-    ) -> bool:
+    def _is_already_notified(self, event_id: str, event_type: str, notification_label: str) -> bool:
         """Check if notification has already been sent."""
         try:
             notification_key = f"{event_id}#{notification_label}"
-
             response = self.table.get_item(
-                Key={
-                    'event_id': notification_key,
-                    'event_type': event_type
-                }
+                Key={'event_id': notification_key, 'event_type': event_type}
             )
-
             return 'Item' in response
-
         except Exception as e:
             logger.error(f"Error checking notification status: {str(e)}")
             return False
@@ -273,14 +201,19 @@ class EventProcessor:
     ) -> bool:
         """Send notification and track it in DynamoDB."""
         try:
-            # Send notification
+            # Get calendar ID from environment
+            calendar_id = os.environ.get('GOOGLE_CALENDAR_ID', '')
+
+            # Send notification with all channels
             results = self.notification_manager.send_notification(
                 event_data=event_data,
                 event_type=event_type,
-                notification_label=notification_label
+                notification_label=notification_label,
+                sheets_client=self.sheets_client,
+                calendar_id=calendar_id
             )
 
-            # Track in DynamoDB if at least one channel succeeded
+            # Track if at least one channel succeeded
             if results.get('email') or results.get('discord'):
                 notification_key = f"{event_data.get('event_id')}#{notification_label}"
 
@@ -293,15 +226,13 @@ class EventProcessor:
                         'sent_at': current_time.isoformat(),
                         'channels': {
                             'email': results.get('email', False),
-                            'discord': results.get('discord', False)
-                        },
-                        'event_details': event_data
+                            'discord': results.get('discord', False),
+                            'calendar': results.get('calendar', False)
+                        }
                     }
                 )
 
-                logger.info(
-                    f"Notification tracked: {notification_key} for {event_type}"
-                )
+                logger.info(f"Notification tracked: {notification_key} - Channels: {results}")
                 return True
 
             return False

@@ -59,3 +59,9 @@ variable "study_sheet_id" {
   type        = string
 }
 
+variable "google_calendar_id" {
+  description = "Google Calendar ID for creating events"
+  type        = string
+  default     = ""
+}
+
