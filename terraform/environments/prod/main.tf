@@ -110,6 +110,7 @@ module "lambda" {
     CONCERTS_SHEET_ID   = var.concerts_sheet_id
     INTERVIEWS_SHEET_ID = var.interviews_sheet_id
     STUDY_SHEET_ID      = var.study_sheet_id
+    GOOGLE_CALENDAR_ID  = var.google_calendar_id
   }
 
   log_retention_days = 7
