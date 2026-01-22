@@ -173,11 +173,20 @@ class EventProcessor:
     def _parse_event_datetime(self, date_str: str, time_str: str, timezone) -> Optional[datetime]:
         """Parse date and time strings into timezone-aware datetime."""
         try:
+            # Limpiar espacios en blanco
+            date_str = date_str.strip() if date_str else ''
+            time_str = time_str.strip() if time_str else ''
+
+            # Validar que tenemos ambos valores
+            if not date_str or not time_str:
+                logger.warning(f"Missing date or time: date='{date_str}', time='{time_str}'")
+                return None
+
             datetime_str = f"{date_str} {time_str}"
             naive_dt = datetime.strptime(datetime_str, '%Y-%m-%d %H:%M')
             return timezone.localize(naive_dt)
         except Exception as e:
-            logger.error(f"Error parsing datetime '{date_str} {time_str}': {str(e)}")
+            logger.error(f"Error parsing datetime '{date_str}' '{time_str}': {str(e)}")
             return None
 
     def _is_already_notified(self, event_id: str, event_type: str, notification_label: str) -> bool:

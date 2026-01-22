@@ -1,4 +1,5 @@
 import os
+import json
 import logging
 from typing import Dict, Any
 from datetime import datetime
@@ -36,19 +37,7 @@ class NotificationManager:
             sheets_client=None,
             calendar_id: str = ''
     ) -> Dict[str, bool]:
-        """
-        Send notification via all channels.
-
-        Args:
-            event_data: Event information
-            event_type: Type of event (concerts, interviews, study)
-            notification_label: Label for this notification timing
-            sheets_client: Optional GoogleSheetsClient for calendar integration
-            calendar_id: Google Calendar ID
-
-        Returns:
-            Dictionary with success status for each channel
-        """
+        """Send notification via all channels."""
         results = {
             'email': False,
             'discord': False,
@@ -85,36 +74,33 @@ class NotificationManager:
             except Exception as e:
                 logger.error(f"Error sending Discord notification: {str(e)}")
 
-            # Create Google Calendar event (only on first notification)
-            if sheets_client and calendar_id and self._should_create_calendar_event(event_type, notification_label):
+            # Create Google Calendar event
+            if sheets_client and calendar_id:
                 try:
+                    event_id_str = event_data.get('event_id', '')
+
                     # Check if event already exists
-                    if not sheets_client.check_calendar_event_exists(calendar_id, event_data.get('event_id', '')):
-                        event_id = sheets_client.create_calendar_event(
+                    if not sheets_client.check_calendar_event_exists(calendar_id, event_id_str):
+                        logger.info(f"Creating calendar event for {event_id_str}")
+                        cal_event_id = sheets_client.create_calendar_event(
                             calendar_id=calendar_id,
                             event_data=event_data,
                             event_type=event_type
                         )
                         results['calendar'] = True
-                        logger.info(f"Calendar event created: {event_id}")
+                        logger.info(f"Calendar event created: {cal_event_id}")
+                    else:
+                        logger.info(f"Calendar event already exists for {event_id_str}")
+                        results['calendar'] = True
+
                 except Exception as e:
-                    logger.error(f"Error creating calendar event: {str(e)}")
+                    logger.error(f"Error with calendar event: {str(e)}")
 
             return results
 
         except Exception as e:
             logger.error(f"Error in send_notification: {str(e)}")
             return results
-
-    def _should_create_calendar_event(self, event_type: str, notification_label: str) -> bool:
-        """Determine if calendar event should be created for this notification."""
-        # Only create calendar event on the earliest notification
-        create_on = {
-            'concerts': '2_weeks_before',
-            'interviews': '1_week_before',
-            'study': '1_day_before_6pm'
-        }
-        return notification_label == create_on.get(event_type)
 
     def _format_email_message(
             self,
