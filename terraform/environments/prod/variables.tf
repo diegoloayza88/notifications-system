@@ -64,4 +64,3 @@ variable "google_calendar_id" {
   type        = string
   default     = ""
 }
-
