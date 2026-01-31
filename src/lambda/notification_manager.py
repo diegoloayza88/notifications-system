@@ -1,8 +1,9 @@
-import os
 import json
 import logging
-from typing import Dict, Any
+import os
 from datetime import datetime
+from typing import Any, Dict
+
 import boto3
 import requests
 

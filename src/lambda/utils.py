@@ -1,6 +1,7 @@
 import logging
 from datetime import datetime
-from typing import Optional
+from typing import Dict, List, Any, Optional
+
 import pytz
 
 logger = logging.getLogger()
@@ -64,3 +65,68 @@ def calculate_time_until_event(
     except Exception as e:
         logger.error(f"Error calculating time until event: {str(e)}")
         return "N/A"
+
+
+def parse_event_row(row: List[Any], event_type: str) -> Optional[Dict[str, Any]]:
+    """Parse a row from Google Sheets into event data."""
+    try:
+        if event_type == 'concerts':
+            if len(row) < 6:
+                return None
+            return {
+                'event_id': row[0],
+                'band': row[1],
+                'venue': row[2],
+                'date': row[3],
+                'time': row[4],
+                'location': row[5],
+                'notes': row[7] if len(row) > 7 else ''
+            }
+        elif event_type == 'interviews':
+            if len(row) < 7:
+                return None
+            return {
+                'event_id': row[0],
+                'company': row[1],
+                'position': row[2],
+                'date': row[3],
+                'time': row[4],
+                'interviewer': row[5],
+                'stage': row[6],
+                'prep_notes': row[8] if len(row) > 8 else ''
+            }
+        else:  # study
+            if len(row) < 6:
+                return None
+            return {
+                'event_id': row[0],
+                'course': row[1],
+                'topic': row[2],
+                'date': row[3],
+                'duration': row[4],
+                'priority': row[5],
+                'resources': row[7] if len(row) > 7 else ''
+            }
+    except Exception as e:
+        logger.error(f"Error parsing row: {str(e)}")
+        return None
+
+
+def parse_event_datetime(date_str: str, time_str: str, timezone) -> Optional[datetime]:
+    """Parse date and time strings into timezone-aware datetime."""
+    try:
+        # Limpiar espacios en blanco
+        date_str = date_str.strip() if date_str else ''
+        time_str = time_str.strip() if time_str else ''
+
+        # Validar que tenemos ambos valores
+        if not date_str or not time_str:
+            logger.warning(f"Missing date or time: date='{date_str}', time='{time_str}'")
+            return None
+
+        datetime_str = f"{date_str} {time_str}"
+        naive_dt = datetime.strptime(datetime_str, '%Y-%m-%d %H:%M')
+        return timezone.localize(naive_dt)
+    except Exception as e:
+        logger.error(f"Error parsing datetime '{date_str}' '{time_str}': {str(e)}")
+        return None
