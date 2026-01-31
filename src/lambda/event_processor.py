@@ -1,8 +1,10 @@
 import logging
 import os
 from datetime import datetime, timedelta
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any
 import boto3
+
+from utils import parse_event_row, parse_event_datetime
 
 logger = logging.getLogger()
 
@@ -37,7 +39,7 @@ class EventProcessor:
 
             for row in events_data:
                 try:
-                    event_data = self._parse_event_row(row, event_type)
+                    event_data = parse_event_row(row, event_type)  # ← USAR FUNCIÓN IMPORTADA
 
                     if not event_data or not event_data.get('event_id'):
                         logger.warning(f"Skipping invalid row: {row}")
@@ -78,50 +80,6 @@ class EventProcessor:
             logger.error(f"Error in process_events: {str(e)}")
             raise
 
-    def _parse_event_row(self, row: List[Any], event_type: str) -> Optional[Dict[str, Any]]:
-        """Parse a row from Google Sheets into event data."""
-        try:
-            if event_type == 'concerts':
-                if len(row) < 6:
-                    return None
-                return {
-                    'event_id': row[0],
-                    'band': row[1],
-                    'venue': row[2],
-                    'date': row[3],
-                    'time': row[4],
-                    'location': row[5],
-                    'notes': row[7] if len(row) > 7 else ''
-                }
-            elif event_type == 'interviews':
-                if len(row) < 7:
-                    return None
-                return {
-                    'event_id': row[0],
-                    'company': row[1],
-                    'position': row[2],
-                    'date': row[3],
-                    'time': row[4],
-                    'interviewer': row[5],
-                    'stage': row[6],
-                    'prep_notes': row[8] if len(row) > 8 else ''
-                }
-            else:  # study
-                if len(row) < 6:
-                    return None
-                return {
-                    'event_id': row[0],
-                    'course': row[1],
-                    'topic': row[2],
-                    'date': row[3],
-                    'duration': row[4],
-                    'priority': row[5],
-                    'resources': row[7] if len(row) > 7 else ''
-                }
-        except Exception as e:
-            logger.error(f"Error parsing row: {str(e)}")
-            return None
-
     def _check_notification_needed(
             self,
             event_data: Dict[str, Any],
@@ -134,7 +92,7 @@ class EventProcessor:
         notifications_needed = []
 
         try:
-            event_datetime = self._parse_event_datetime(
+            event_datetime = parse_event_datetime(  # ← USAR FUNCIÓN IMPORTADA
                 event_data.get('date', ''),
                 event_data.get('time', ''),
                 self.timezone
@@ -170,24 +128,7 @@ class EventProcessor:
             logger.error(f"Error checking notifications: {str(e)}")
             return notifications_needed
 
-    def _parse_event_datetime(self, date_str: str, time_str: str, timezone) -> Optional[datetime]:
-        """Parse date and time strings into timezone-aware datetime."""
-        try:
-            # Limpiar espacios en blanco
-            date_str = date_str.strip() if date_str else ''
-            time_str = time_str.strip() if time_str else ''
-
-            # Validar que tenemos ambos valores
-            if not date_str or not time_str:
-                logger.warning(f"Missing date or time: date='{date_str}', time='{time_str}'")
-                return None
-
-            datetime_str = f"{date_str} {time_str}"
-            naive_dt = datetime.strptime(datetime_str, '%Y-%m-%d %H:%M')
-            return timezone.localize(naive_dt)
-        except Exception as e:
-            logger.error(f"Error parsing datetime '{date_str}' '{time_str}': {str(e)}")
-            return None
+    # ← ELIMINAR _parse_event_datetime de aquí
 
     def _is_already_notified(self, event_id: str, event_type: str, notification_label: str) -> bool:
         """Check if notification has already been sent."""
